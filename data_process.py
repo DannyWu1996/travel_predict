@@ -29,13 +29,18 @@ def json_to_df(file_path):
 	with open(file_path, 'r') as fin:
 		dic = {}
 		indx = 0
+		overlapped = 0
 		for line in fin:
-			# print eval(line)
+			record = eval(line)
+			if(record['dpt']==record['dst']):
+				overlapped += 1
+				continue
 			dic[indx] = eval(line)
 			indx += 1
 
 		df = pd.DataFrame.from_dict(dic, orient='index')
 		df.reset_index(drop=True)
+		print("delete overlapped record %d" %  overlapped)
 		return df
 
 
@@ -308,23 +313,40 @@ user_hist = {}
 def gen_neg(current_airport, pos):
 	neg = pos
 	# print travel_network
-	while neg == pos:
-		if len(travel_network[current_airport].indices) <= 1:
-			# print current_airport
-			neg = random.randint(0, item_count-1)
-			continue
-		neg = random.choice(travel_network[current_airport].indices)
+	while neg == pos or neg == current_airport:
+		# if len(travel_network[current_airport].indices) <= 1:
+		# 	# print current_airport
+		# 	neg = random.randint(0, item_count-1)
+		# 	continue
+		# neg = random.choice(travel_network[current_airport].indices)
+		neg = random.randint(0, item_count-1)
 	return neg
 
+'''
+	merge dpt and dst to a travel route
+'''
+
+def merge_travel_route(dpt, dst):
+    i=0
+    j=0
+    travel_route = []
+    while(i<len(dpt)):
+        travel_route.append(dpt[i])
+        i += 1
+        if i<len(dpt) and dpt[i]!=dst[j]:
+            travel_route.append(dst[j])
+        j += 1
+    travel_route.append(dst[-1])
+    return travel_route
 
 for user_order_id, history in history_df.groupby(['user_id', 'order_id']):
 	if user_order_id[0] != prev_user:
 		prev_user = user_order_id[0]
 		prev_hist = []
-	pos_list = [history['dpt'].tolist()[0]] + history['dst'].tolist()
+	pos_list = merge_travel_route(history['dpt'].tolist(), history['dst'].tolist())
 	# user_all_hist[user_order_id[0]] = user_all_hist.get(user_order_id[0], []) + pos_list
 
-	prev_hist = prev_hist[:-1] if prev_hist and prev_hist[:-1] == pos_list[0] else prev_hist
+	prev_hist = prev_hist[:-1] if prev_hist and prev_hist[-1] == pos_list[0] else prev_hist
 
 	'''
 		prev hist city tuple, each tuple item contains previous city and current city,
@@ -342,9 +364,9 @@ for user_order_id, history in history_df.groupby(['user_id', 'order_id']):
 				cutting strategy for long/short sequence of history
 			'''
 			if long_seq:
-				train_set.append((user_order_id[0], prev_hist+hist, pos_list[i], neg_hist_i[: len(prev_hist)+i-1]))
+				train_set.append((user_order_id[0], prev_hist+hist, pos_list[i], neg_hist_i[: len(prev_hist)+i]))
 			else:
-				train_set.append((user_order_id[0], hist, pos_list[i], neg_hist_i[len(prev_hist)+1: len(prev_hist)+i-1]))
+				train_set.append((user_order_id[0], hist, pos_list[i], neg_hist_i[len(prev_hist)+1: len(prev_hist)+i]))
 		else:
 			user_current_hist[user_order_id[0]] = (user_order_id[0], prev_hist+hist, pos_list[i], neg_hist_i)
 			# user_current_hist[user_order_id[0]] = (user_order_id[0], hist, pos_list[i], neg_hist_i[len(prev_hist):])
@@ -404,7 +426,7 @@ for user_order_id, history in train_history_df.groupby(['user_id', 'order_id']):
 	if user_order_id[0] != prev_user:
 		prev_user = user_order_id[0]
 		prev_hist = []
-	pos_list = [history['dpt'].tolist()[0]] + history['dst'].tolist()
+	pos_list = merge_travel_route(history['dpt'].tolist(), history['dst'].tolist())
 	# user_all_hist[user_order_id[0]] = user_all_hist.get(user_order_id[0], []) + pos_list
 	
 	prev_hist = prev_hist[:-1] if prev_hist and prev_hist[:-1] == pos_list[0] else prev_hist
@@ -437,7 +459,7 @@ for user_order_id, history in test_history_df.groupby(['user_id', 'order_id']):
 	# user_all_hist[user_order_id[0]] = user_all_hist.get(user_order_id[0], []) + pos_list
 	
 	# avoid acycle
-	prev_hist = prev_hist[:-1] if prev_hist and prev_hist[:-1] == pos_list[0] else prev_hist
+	prev_hist = prev_hist[:-1] if prev_hist and prev_hist[-1] == pos_list[0] else prev_hist
 	cur_hist = prev_hist + pos_list
 	city_tuple = zip(cur_hist[:-1], cur_hist[1:])
 	neg_hist_i = [gen_neg(cur, pos) for cur, pos in city_tuple]

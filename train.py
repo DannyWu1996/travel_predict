@@ -51,10 +51,10 @@ framework = args.framework
 pre_train = args.pre_train
 lr = args.lr        
 alpha = args.alpha
-decay_rate = 0.1
-attention_size = 32
-hidden_units = 16
-embedding_size = 32
+decay_rate = 0.5
+attention_size = 64
+hidden_units = 32
+embedding_size = 64
 
 
 os.environ['CUDA_VISIBLE_DEVICES'] = args.cuda
@@ -80,8 +80,8 @@ print("==================================================================")
 '''
     root directory
 '''
-root_dir = '../raw_data/itny/itny_10'
-
+# root_dir = '../raw_data/itny/itny_10'
+root_dir = aux_path
 '''
     loading the data
 '''
@@ -126,13 +126,13 @@ gpu_options = tf.GPUOptions(allow_growth=True)
 loss_list = []
 eval_recall = defaultdict(list)
 test_recall = defaultdict(list)
-eval_precision = defaultdict(list)
-test_precision = defaultdict(list)
+eval_MRR = defaultdict(list)
+test_MRR = defaultdict(list)
 
 eval_best_recall = []
 test_best_recall = []
-eval_best_precision = []
-test_best_precision = []
+eval_best_MRR = []
+test_best_MRR = []
 
 top_ks = [top_k]
 
@@ -148,7 +148,7 @@ def __calculate_(sess, model, data, travel_network, item_count, cate_list,
     current_citys = []
     users_set = set()
     recall_k = {}
-    precision_k = {}
+    MRR_k = {}
 #     print("test sub items")
     for _, uij in DataIterator(data, travel_network, item_count, cate_list, 
                                 batch_size, shuffle_each_epoch=True, type=2):
@@ -165,44 +165,18 @@ def __calculate_(sess, model, data, travel_network, item_count, cate_list,
         score_arr.append(score_)
     score_arr = np.concatenate(score_arr, axis=0).reshape((-1, predict_ads_num))  
     assert len(true_labels) ==  score_arr.shape[0], '{}, {}'.format(len(true_labels), score_arr.shape)
+    #order the index based on the  probs
+    pred_labels = get_top_k_recommendation(score_arr, current_citys, item_count, None)
+
+    # print(pred_labels.shape)
     for top_k in top_ks:
-        pred_labels_k = get_top_k_recommendation(score_arr, current_citys, top_k, travel_network)
-        recall_k[top_k] = get_recall_k(pred_labels_k, true_labels, top_k)
-        precision_k[top_k] = get_precision_k(pred_labels_k, true_labels, top_k, len(users_set))
+        recall_k[top_k], MRR_k[top_k] = get_recall_MRR_k(pred_labels, true_labels, top_k)
         if type==1:
-            print('test set top%d recall: %f precision: %f' % (top_k, recall_k[top_k], precision_k[top_k]))
+            print('test set top%d recall: %f MRR: %f' % (top_k, recall_k[top_k], MRR_k[top_k]))
         elif type==2:
-            print('eval set top%d recall: %f precision: %f' % (top_k, recall_k[top_k], precision_k[top_k]))
+            print('eval set top%d recall: %f MRR: %f' % (top_k, recall_k[top_k], MRR_k[top_k]))
 
-    return (current_citys, true_labels, score_arr), recall_k, precision_k
-
-def __eval_(sess, model, eval_data, travel_network, item_count, cate_list,
-            eval_batch_size, shuffle_each_epoch=True):
-    score_arr = []
-    true_labels = []
-    current_citys = []
-    users_set = set()
-    users_num = 10000
-    recall_k = {}
-    precision_k = {}
-#     print("eval sub items")
-    for _, uij in DataIterator(eval_data, travel_network, item_count, cate_list,
-            eval_batch_size, shuffle_each_epoch=True):
-        u, i, ic, hist_i, hist_ic, mask, y, sl, neg_hist_i, neg_hist_ic = uij
-        true_labels+=i
-        users_set.update(u)
-        indx = [[r, c-1] for r, c in zip(range(len(sl)), sl)]
-        current_citys += hist_i[tuple(zip(*indx))].tolist()
-        score_, loss, accuracy, aux_loss = model.calculat(sess, uij)
-        score_arr.append(score_)
-    score_arr = np.concatenate(score_arr, axis=0).reshape((-1, item_count))  
-    assert len(true_labels) ==  score_arr.shape[0], '{}, {}'.format(len(true_labels), score_arr.shape)
-    for top_k in top_ks:
-        pred_labels_k = get_top_k_recommendation(score_arr, current_citys, top_k, city_network)
-        recall_k[top_k] = get_recall_k(pred_labels_k, true_labels, top_k)
-        precision_k[top_k] = get_precision_k(pred_labels_k, true_labels, top_k, len(users_set))
-        print('eval set top%d recall: %f precision: %f' % (top_k, recall_k[top_k], precision_k[top_k]))
-    return (current_citys, true_labels, score_arr), recall_k, precision_k
+    return (current_citys, true_labels, score_arr), recall_k, MRR_k
 
 def union_dict(dict1, dict2):
     for key, value in dict2.items():
@@ -231,6 +205,12 @@ with tf.Session(config=tf.ConfigProto(gpu_options=gpu_options, log_device_placem
             user_count, item_count, cate_count,
             hidden_units, neg_sampling,
             embedding_size, travel_network.todense(), alpha)
+    elif framework == 'gru_att':
+        model = Model_GRU_ATT(
+            user_count, item_count, cate_count,
+            attention_size, hidden_units, neg_sampling,
+            embedding_size, travel_network.todense(), alpha
+        )
     sess.run(tf.global_variables_initializer())
     sess.run(tf.local_variables_initializer())    
     
@@ -256,21 +236,21 @@ with tf.Session(config=tf.ConfigProto(gpu_options=gpu_options, log_device_placem
         print('epoch {}, loss: {}, elapse: {:.2f} seconds'.format(epoch, losses, elapsed))
 
         # test for evaluation set
-        _, recall, precision = __calculate_(
+        _, recall, MRR = __calculate_(
             sess, model, pos_train, travel_network, item_count, cate_list, 
             predict_batch_size, shuffle_each_epoch=True, type=2)
         
         eval_recall = union_dict(eval_recall, recall)
-        eval_precision = union_dict(eval_precision, precision)
+        eval_MRR = union_dict(eval_MRR, MRR)
         
         # test for test set
-        _, recall, precision = __calculate_(
+        _, recall, MRR = __calculate_(
             sess, model, test_batch, travel_network, item_count, cate_list,
             predict_batch_size, shuffle_each_epoch=True, type=1)
     
             
         test_recall = union_dict(test_recall, recall)
-        test_precision = union_dict(test_precision, precision)
+        test_MRR = union_dict(test_MRR, MRR)
 
 
     # item_embedding = sess.run(model.item_emb_w)
@@ -278,12 +258,12 @@ with tf.Session(config=tf.ConfigProto(gpu_options=gpu_options, log_device_placem
 #         print(np.amax(output, axis=1))
     for top_k in top_ks:
         eval_best_recall.append(max(eval_recall[top_k]))
-        eval_best_precision.append(max(eval_precision[top_k]))
-        print('eval set best top{} recall: {} precision: {}'
-              .format(top_k, eval_best_recall[-1], eval_best_precision[-1]))
+        eval_best_MRR.append(max(eval_MRR[top_k]))
+        print('eval set best top{} recall: {} MRR: {}'
+              .format(top_k, eval_best_recall[-1], eval_best_MRR[-1]))
         
         test_best_recall.append(max(test_recall[top_k]))
-        test_best_precision.append(max(test_precision[top_k]))
-        print('test set best top{} recall: {} precision: {}'
-              .format(top_k, test_best_recall[-1], test_best_precision[-1]))
+        test_best_MRR.append(max(test_MRR[top_k]))
+        print('test set best top{} recall: {} MRR: {}'
+              .format(top_k, test_best_recall[-1], test_best_MRR[-1]))
     

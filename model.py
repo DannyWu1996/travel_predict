@@ -10,7 +10,7 @@ from model_aux import *
 np.random.seed(7)
 
 class Model(object):
-	def __init__(self, user_count, item_count, cate_count, use_negsampling=False, embedding_size=64, travel_network=None, alpha=1e-4):
+	def __init__(self, user_count, item_count, cate_count, embedding_size, hidden_size, attention_size, use_negsampling=False, travel_network=None, alpha=1e-4):
 		with tf.variable_scope('inputs'):
 			self.u = tf.placeholder(tf.int32, [None,], name='user_batch_id')
 			self.i = tf.placeholder(tf.int32, [None,], name='item_batch_id')
@@ -27,6 +27,10 @@ class Model(object):
 			self.use_negsampling = use_negsampling
 			
 			self.mask = tf.placeholder(tf.float32, [None, None], name='mask')
+
+			self.embedding_size = embedding_size
+			self.hidden_size = hidden_size
+			self.attention_size = attention_size
 			
 		'''
 			if use negative sampling during the training process,
@@ -85,7 +89,7 @@ class Model(object):
 		if self.use_negsampling:
 			# self.neg_hist_eb = tf.concat([self.neg_item_hist, self.neg_cate_hist], -1)
 			self.neg_hist_eb = self.neg_item_hist_embedding
-			self.neg_hist_eb_sum = tf.reduce_sum(self.neg_hist_eb, [2,1])
+			self.neg_hist_eb_sum = tf.reduce_sum(self.neg_hist_eb, 1)
 	'''
 		essential part for fcn network layer
 	'''
@@ -93,13 +97,13 @@ class Model(object):
 		with tf.variable_scope('fcn', reuse=tf.AUTO_REUSE) as scope:
 			# bn1 = tf.layers.batch_normalization(inputs=input, name='bn1')
 			bn1 = input
-			dnn1 = tf.layers.dense(bn1, units=self.embedding_size, activation=None, name='f1')
+			dnn1 = tf.layers.dense(bn1, units=2*self.embedding_size, activation=None, name='f1')
 			if use_dice:
 				dnn1 = dice(dnn1, name='dice_1')
 			else:
 				dnn1 = prelu(dnn1, name='prelu1')
 			
-			dnn2 = tf.layers.dense(dnn1, 20, activation=None, name='f2')
+			dnn2 = tf.layers.dense(dnn1, 40, activation=None, name='f2')
 			if use_dice:
 				dnn2 = dice(dnn2, name='dice2')
 			else:
@@ -155,8 +159,8 @@ class Model(object):
 		'''
 		aux_pos_loss = -tf.reshape(tf.log(pos_input_prob), [-1, tf.shape(pos_seq_eb)[1]]) * mask
 		aux_neg_loss = -tf.reshape(tf.log(1-neg_input_prob), [-1, tf.shape(neg_seq_eb)[1]]) * mask
-		aux_loss = tf.reduce_mean(aux_pos_loss+aux_neg_loss, [1, 0])
-
+		aux_loss = tf.reduce_mean(tf.reduce_sum(aux_pos_loss+aux_neg_loss, -1), 0)
+		
 		return aux_loss
 	
 	'''
@@ -168,7 +172,7 @@ class Model(object):
 			# bn1 = tf.layers.batch_normalization(inputs=input, name='b1')
 			bn1 = input
 			dnn1 = tf.layers.dense(bn1, self.embedding_size, activation=tf.nn.sigmoid, name='f1')
-			dnn2 = tf.layers.dense(dnn1, 10, activation=tf.nn.sigmoid, name='f2')
+			dnn2 = tf.layers.dense(dnn1, 40, activation=tf.nn.sigmoid, name='f2')
 			dnn3 = tf.layers.dense(dnn2, 1, activation=tf.nn.sigmoid, name='f3')
 
 			y_hat = dnn3
@@ -294,7 +298,7 @@ class Model(object):
 
 class Model_GRU_ATT_GRU(Model):
 	def __init__(self, user_count, item_count, cate_count, attention_size, hidden_units, use_negsampling=False, embedding_size=64, travel_network=None, alpha=1e-4):
-		super(Model_GRU_ATT_GRU, self).__init__(user_count, item_count, cate_count, use_negsampling, embedding_size, travel_network, alpha)
+		super(Model_GRU_ATT_GRU, self).__init__(user_count, item_count, cate_count, embedding_size, hidden_units,  attention_size, use_negsampling, travel_network, alpha)
 
 		'''
 			RNN layers
@@ -380,7 +384,7 @@ class Model_GRU_ATT_GRU(Model):
 
 class Model_GRU_GRU_ATT(Model):
 	def __init__(self, user_count, item_count, cate_count, attention_size, hidden_units, use_negsampling=False, embedding_size=64, travel_network=None, alpha=1e-4):
-		super(Model_GRU_GRU_ATT, self).__init__(user_count, item_count, use_negsampling, embedding_size, travel_network, alpha)
+		super(Model_GRU_GRU_ATT, self).__init__(user_count, item_count, embedding_size, hidden_units,  attention_size, use_negsampling, travel_network, alpha)
 
 		'''
 			rnn layers
@@ -441,7 +445,7 @@ class Model_GRU_GRU_ATT(Model):
 '''
 class Model_GRU(Model):
 	def __init__(self, user_count, item_count, cate_count, hidden_units, use_negsampling=False, embedding_size=64, travel_network=None, alpha=1e-4):
-		super(Model_GRU, self).__init__(user_count, item_count, cate_count, use_negsampling, embedding_size, travel_network, alpha)
+		super(Model_GRU, self).__init__(user_count, item_count, cate_count, embedding_size, hidden_units,  None, use_negsampling, travel_network, alpha)
 		'''
 			simple rnn model
 		'''
@@ -481,7 +485,7 @@ class Model_GRU(Model):
 '''
 class Model_GRU_GRU(Model):
 	def __init__(self, user_count, item_count, cate_count, hidden_units, use_negsampling=False, embedding_size=64, travel_network=None, alpha=0.0001):
-		super(Model_GRU_GRU, self).__init__(user_count, item_count, cate_count, use_negsampling, embedding_size, travel_network, alpha)
+		super(Model_GRU_GRU, self).__init__(user_count, item_count, cate_count, embedding_size, hidden_units,  None, use_negsampling, travel_network, alpha)
 
 		'''
 			simple rnn_1 model 
@@ -523,5 +527,50 @@ class Model_GRU_GRU(Model):
 		input = tf.concat([self.item_eb, final_states2], -1)
 		input_sub = tf.concat([item_eb_sub, final_states2_sub], -1)
 		
+		self.build_fcn_net(input, use_dice=True)
+		self.build_fcn_net_sub(input_sub, use_dice=True)
+	
+
+class Model_GRU_ATT(Model):
+	def __init__(self, user_count, item_count, cate_count, attention_size, hidden_units, use_negsampling=False, embedding_size=64, travel_network=None, alpha=0.0001):
+		super(Model_GRU_ATT, self).__init__(user_count, item_count, cate_count, embedding_size, hidden_units,  attention_size, use_negsampling, travel_network, alpha)
+		'''
+			simple dynmaic rnn module
+		'''
+		with tf.variable_scope('rnn1'):
+			rnn_outputs, _ = tf.nn.dynamic_rnn(
+				GRUCell(hidden_units), inputs=self.item_hist_eb,
+				sequence_length=self.sl, dtype=tf.float32,
+				scope='gru1'
+			)
+		aux_loss_1 = self.auxiliary_loss(rnn_outputs[:, :-1, :], self.item_hist_eb[:, 1:, :],
+										self.neg_hist_eb[:, :-1, :], self.mask[:, 1:], name="gru")
+
+		self.aux_loss =  aux_loss_1
+		# indice = self.sl - tf.ones_like(self.sl)
+		range = tf.expand_dims(tf.range(tf.shape(self.sl)[0]), 1)
+		pos = tf.expand_dims(tf.subtract(self.sl, tf.ones_like(self.sl)), 1)
+		indices = tf.concat([range, pos], -1)
+
+		last_item_indices = tf.gather_nd(self.hist_i, indices)
+
+		queries = tf.nn.embedding_lookup(self.item_emb_w, last_item_indices)
+		# queries = tf.tile(tf.expand_dims(queries, 1), [1, tf.shape(self.hist_i)[1], 1])
+
+		'''
+			Attention layer, att_outputs will be the weighted one w.r.t. given target item.
+		'''
+		with tf.variable_scope('attention_layer1'):
+			att_outputs, weights = fcn_attention(queries, rnn_outputs, attention_size, self.mask,
+												use_softmax=True, name='att_1', mode='sum', return_weight=True)
+
+			tf.summary.histogram('weight_outputs', weights)
+			print(att_outputs.get_shape().as_list())
+		att_outputs_sub =  tf.tile(tf.expand_dims(att_outputs, 1), [1, item_count, 1])
+		item_eb_sub = tf.tile(tf.expand_dims(self.item_emb_w, 0), [tf.shape(self.item_eb)[0], 1, 1])
+		# input = tf.concat([att_outputs, self.item_eb, att_outputs-self.item_eb, att_outputs*self.item_eb])
+		input = tf.concat([self.item_eb, att_outputs], -1)
+		input_sub = tf.concat([item_eb_sub, att_outputs_sub], -1)
+
 		self.build_fcn_net(input, use_dice=True)
 		self.build_fcn_net_sub(input_sub, use_dice=True)

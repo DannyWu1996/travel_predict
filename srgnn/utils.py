@@ -8,7 +8,6 @@ def remove_single_node(data):
         if len(ts[1]) == 1:
             continue
         res.append(ts)
-    print(len(res))
     return res
             
 def build_graph(train_data):
@@ -53,9 +52,11 @@ def split_validation(train_set, valid_portion):
 
 
 class Data():
-    def __init__(self, data, sub_graph=False, method='ggnn', sparse=False, shuffle=False):
+    def __init__(self, data, item_count, sub_graph=False, method='ggnn', sparse=False, shuffle=False):
         inputs = [ts[1] for ts in data]
+
         inputs, mask, len_max = data_masks(inputs, [0])
+        self.item_count = item_count
         self.inputs = np.asarray(inputs)
         self.mask = np.asarray(mask)
         self.len_max = len_max
@@ -83,17 +84,26 @@ class Data():
     def get_slice(self, index):
         if 1:
             items, n_node, A_in, A_out, alias_inputs = [], [], [], [], []
+            # get train batch data
             for u_input in self.inputs[index]:
+                # n_node store number of unique node of each item in train_batch
                 n_node.append(len(np.unique(u_input)))
+            # max_n_node length for mask    
             max_n_node = np.max(n_node)
-            if self.method == 'ggnn':
+            if self.method == 'ggnn' or self.method=='ggnn_gru':
                 for u_input in self.inputs[index]:
+                    # find unique node id for each item in train_batch
                     node = np.unique(u_input)
                     '''
                         node mask for each batch
                     '''
-                    items.append(node.tolist() + (max_n_node - len(node)) * [0])
+                    items.append(node.tolist() + (max_n_node - len(node)) * [self.item_count])
+                    
+                    # u_A is a m*m adjacent matrix for current batch
                     u_A = np.zeros((max_n_node, max_n_node))
+                    '''
+                        generate the directed graph for sequence of id
+                    '''
                     for i in np.arange(len(u_input) - 1):
                         # indicate it's the i is last node in this sequence
                         if u_input[i + 1] == 0:
@@ -101,13 +111,18 @@ class Data():
                         u = np.where(node == u_input[i])[0][0]
                         v = np.where(node == u_input[i + 1])[0][0]
                         u_A[u][v] = 1
+                    # calcalate influx degree for each node in current DiGraph 
                     u_sum_in = np.sum(u_A, 0)
+                    # adjust those influx degree is 0 as 1
                     u_sum_in[np.where(u_sum_in == 0)] = 1
                     
+                    # normalize the u_A as u_A_in
                     u_A_in = np.divide(u_A, u_sum_in)
                     u_sum_out = np.sum(u_A, 1)
                     u_sum_out[np.where(u_sum_out == 0)] = 1
+                    # normalize u_A_as u_A_out
                     u_A_out = np.divide(u_A.transpose(), u_sum_out)
+
 
                     A_in.append(u_A_in)
                     A_out.append(u_A_out)
@@ -119,7 +134,7 @@ class Data():
                 A_out = []
                 for u_input in self.inputs[index]:
                     node = np.unique(u_input)
-                    items.append(node.tolist() + (max_n_node - len(node)) * [0])
+                    items.append(node.tolist() + (max_n_node - len(node)) * [item_count])
                     u_A = np.eye(max_n_node)
                     for i in np.arange(len(u_input) - 1):
                         if u_input[i + 1] == 0:
@@ -129,6 +144,7 @@ class Data():
                         u_A[u][v] = 1
                     A_in.append(-1e9 * (1 - u_A))
                     A_out.append(-1e9 * (1 - u_A.transpose()))
+                    # id for each node in the node set
                     alias_inputs.append([np.where(node == i)[0][0] for i in u_input])
                 return A_in, A_out, alias_inputs, items, self.mask[index], self.targets[index]
 
